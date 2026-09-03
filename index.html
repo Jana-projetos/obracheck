@@ -232,6 +232,16 @@
   .sig-hint { position: absolute; bottom: 8px; left: 12px; color: #B9B2A0; font-size: 12px; pointer-events: none; }
   .sig-hint.hidden { display: none; }
 
+  .foto-section[hidden] { display: none; }
+  .foto-section { margin-bottom: 18px; }
+  .foto-section > span { display: block; font-size: 12.5px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 8px; }
+  .foto-list { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
+  .foto-thumb { position: relative; width: 84px; height: 84px; border-radius: 10px; overflow: hidden; border: 1.5px solid var(--border); background: var(--surface); flex: none; }
+  .foto-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .foto-thumb button { position: absolute; top: 3px; right: 3px; width: 22px; height: 22px; border-radius: 50%; border: none; background: rgba(19,12,14,0.72); color: #fff; font-size: 14px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+  .foto-add-btn { appearance: none; border: 1.5px dashed var(--border); background: var(--bg); color: var(--text); border-radius: 10px; padding: 10px 16px; font-size: 14px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; min-height: 44px; }
+  .foto-add-btn:active { transform: translateY(1px); }
+
   .closing-section { margin-top: 6px; padding-top: 20px; border-top: 1.5px dashed var(--border); }
   .closing-section .card-eyebrow { margin-bottom: 4px; }
   .closing-hint { font-size: 13px; color: var(--text-muted); margin: 0 0 16px; max-width: 640px; }
@@ -543,6 +553,26 @@
     setTimeout(cleanup, 60000);
   }
 
+  function drawPhotoBlock(doc, dataUrl, label, x, y, w, h) {
+    doc.setDrawColor(190);
+    doc.setLineWidth(0.3);
+    doc.rect(x, y, w, h);
+    if (dataUrl) {
+      try {
+        var props = doc.getImageProperties(dataUrl);
+        var ratio = Math.min((w - 2) / props.width, (h - 2) / props.height);
+        var iw = props.width * ratio, ih = props.height * ratio;
+        var ix = x + (w - iw) / 2, iy = y + (h - ih) / 2;
+        doc.addImage(dataUrl, "JPEG", ix, iy, iw, ih, undefined, "FAST");
+      } catch (e) { /* prova em foto é um extra; segue sem ela se a imagem falhar */ }
+    }
+    doc.setFontSize(7);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(90);
+    doc.text(label, x, y + h + 3.2);
+    doc.setTextColor(20);
+  }
+
   function drawSignatureBlock(doc, dataUrl, label, x, y, w, h) {
     doc.setDrawColor(190);
     doc.setLineWidth(0.3);
@@ -735,6 +765,33 @@
       });
       var sigRows = Math.ceil(sigDays.length / perRow);
       y += sigRows * (sigH + 8) + 2;
+    }
+
+    // fotos anexadas como prova das não conformidades
+    var fotoEntries = [];
+    Object.keys(record.dias).sort().forEach(function (dia) {
+      var de3 = record.dias[dia];
+      (de3.fotos || []).forEach(function (foto, i) {
+        fotoEntries.push({ dia: dia, foto: foto, idx: i + 1 });
+      });
+    });
+    if (fotoEntries.length) {
+      if (y + 40 > pageHeight - 14) { doc.addPage("a4", "landscape"); y = 16; }
+      y += 3;
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8.5);
+      doc.setTextColor(20);
+      doc.text("Fotos anexadas (prova das não conformidades)", marginX, y);
+      y += 4;
+      var fotoW = 40, fotoH = 30, fotoGap = 6, fotoPerRow = Math.max(1, Math.floor((pageWidth - marginX * 2) / (fotoW + fotoGap)));
+      fotoEntries.forEach(function (fe, i) {
+        var col = i % fotoPerRow, row = Math.floor(i / fotoPerRow);
+        var fx = marginX + col * (fotoW + fotoGap), fy = y + row * (fotoH + 9);
+        if (fy + fotoH + 9 > pageHeight - 10) { doc.addPage("a4", "landscape"); y = 16; fy = y; }
+        drawPhotoBlock(doc, fe.foto, "Dia " + fe.dia + " — foto " + fe.idx, fx, fy, fotoW, fotoH);
+      });
+      var fotoRows = Math.ceil(fotoEntries.length / fotoPerRow);
+      y += fotoRows * (fotoH + 9) + 2;
     }
 
     // fechamento do mês (assinaturas do operador responsável e do TST)
@@ -1095,8 +1152,8 @@
     var dia = sheet.selectedDay;
     var existing = record.dias[dia];
     var draft = existing
-      ? { operador: existing.operador, statuses: existing.statuses.slice(), observacao: existing.observacao || "", assinatura: existing.assinatura || null }
-      : { operador: "", statuses: record.itens.map(function () { return null; }), observacao: "", assinatura: null };
+      ? { operador: existing.operador, statuses: existing.statuses.slice(), observacao: existing.observacao || "", assinatura: existing.assinatura || null, fotos: (existing.fotos || []).slice() }
+      : { operador: "", statuses: record.itens.map(function () { return null; }), observacao: "", assinatura: null, fotos: [] };
 
     var epiChips = EPI_LIST.map(function (e) { return '<span class="epi-chip">' + esc(e) + "</span>"; }).join("");
     var itemsHtml = record.itens.map(function (desc, idx) {
@@ -1123,6 +1180,12 @@
       '<div id="form-errors" class="form-errors" hidden></div>' +
       '<div class="items-list">' + itemsHtml + "</div>" +
       '<label class="field nc-note" id="nc-note-wrap" hidden><span>Descreva a não conformidade observada</span><textarea id="f-nc" placeholder="Descreva o que foi encontrado…">' + esc(draft.observacao) + "</textarea></label>" +
+      '<div class="foto-section" id="foto-section" hidden>' +
+      '<span>Foto da não conformidade (obrigatória)</span>' +
+      '<div class="foto-list" id="foto-list"></div>' +
+      '<button type="button" class="foto-add-btn" id="btn-add-foto">📷 Tirar/anexar foto</button>' +
+      '<input type="file" id="f-foto-input" accept="image/*" capture="environment" multiple hidden>' +
+      "</div>" +
       '<div class="sig-section" id="sig-section" hidden>' +
       '<div class="sig-block"><span>Assinatura do operador (obrigatória quando há não conformidade)</span><div class="sig-pad-wrap"><canvas id="sig-operador"></canvas><span class="sig-hint" id="hint-operador">Assine aqui</span></div><button type="button" class="btn-ghost" id="clear-sig">Limpar assinatura</button></div>' +
       "</div>" +
@@ -1163,15 +1226,76 @@
     if (draft.assinatura) sigCtl.restore(draft.assinatura);
     document.getElementById("clear-sig").addEventListener("click", function () { sigCtl.clear(); });
 
+    renderFotoList(draft);
+    var fotoInput = document.getElementById("f-foto-input");
+    document.getElementById("btn-add-foto").addEventListener("click", function () { fotoInput.click(); });
+    fotoInput.addEventListener("change", function (e) {
+      var files = Array.prototype.slice.call(e.target.files || []);
+      fotoInput.value = ""; // permite escolher/tirar o mesmo arquivo de novo depois
+      if (!files.length) return;
+      toast("Processando " + files.length + " foto(s)…");
+      Promise.all(files.map(compressImageFile)).then(function (dataUrls) {
+        dataUrls.forEach(function (url) { if (url) draft.fotos.push(url); });
+        renderFotoList(draft);
+      }).catch(function () {
+        toast("Não foi possível processar uma das fotos.", "error");
+      });
+    });
+
     document.getElementById("btn-salvar-dia").addEventListener("click", function () { saveDay(draft); });
+  }
+
+  function renderFotoList(draft) {
+    var list = document.getElementById("foto-list");
+    if (!list) return;
+    list.innerHTML = draft.fotos.map(function (url, idx) {
+      return '<div class="foto-thumb" data-idx="' + idx + '"><img src="' + url + '" alt="Foto ' + (idx + 1) + ' da não conformidade"><button type="button" aria-label="Remover foto">×</button></div>';
+    }).join("");
+    list.querySelectorAll(".foto-thumb button").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var idx = parseInt(btn.parentNode.getAttribute("data-idx"), 10);
+        draft.fotos.splice(idx, 1);
+        renderFotoList(draft);
+      });
+    });
+  }
+
+  // Comprime a foto no próprio aparelho antes de guardar (fotos de câmera podem ter
+  // vários MB — sem isso, algumas fotos já estourariam o limite de armazenamento local).
+  function compressImageFile(file, maxDim, quality) {
+    maxDim = maxDim || 1024;
+    quality = quality || 0.68;
+    return new Promise(function (resolve) {
+      var reader = new FileReader();
+      reader.onload = function () {
+        var img = new Image();
+        img.onload = function () {
+          var scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+          var w = Math.max(1, Math.round(img.width * scale));
+          var h = Math.max(1, Math.round(img.height * scale));
+          var canvas = document.createElement("canvas");
+          canvas.width = w; canvas.height = h;
+          var ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0, w, h);
+          try { resolve(canvas.toDataURL("image/jpeg", quality)); }
+          catch (e) { resolve(null); }
+        };
+        img.onerror = function () { resolve(null); };
+        img.src = String(reader.result);
+      };
+      reader.onerror = function () { resolve(null); };
+      reader.readAsDataURL(file);
+    });
   }
 
   function updateConditionalSections(draft) {
     var hasNC = draft.statuses.some(function (s) { return s === "nc"; });
     var ncWrap = document.getElementById("nc-note-wrap");
+    var fotoWrap = document.getElementById("foto-section");
     var sigWrap = document.getElementById("sig-section");
     var wasHidden = sigWrap && sigWrap.hidden;
     if (ncWrap) ncWrap.hidden = !hasNC;
+    if (fotoWrap) fotoWrap.hidden = !hasNC;
     if (sigWrap) sigWrap.hidden = !hasNC;
     // o campo de assinatura estava escondido (display:none) e acabou de aparecer:
     // sem isso, o canvas fica com resolução interna zerada e a assinatura não é
@@ -1188,6 +1312,7 @@
     if (unanswered > 0) errors.push(unanswered + " item(ns) do checklist ainda não foram marcados (OK / Não conf. / N/A).");
     var hasNC = draft.statuses.some(function (s) { return s === "nc"; });
     if (hasNC && (!draft.observacao || !draft.observacao.trim())) errors.push("Descreva a não conformidade observada.");
+    if (hasNC && (!draft.fotos || draft.fotos.length === 0)) errors.push("Anexe ao menos uma foto como prova da não conformidade.");
     if (hasNC && !draft.assinatura) errors.push("Colete a assinatura do operador — obrigatória quando há não conformidade.");
     return errors;
   }
@@ -1209,6 +1334,7 @@
       operador: draft.operador,
       statuses: draft.statuses.slice(),
       observacao: hasNC ? draft.observacao : "",
+      fotos: hasNC ? draft.fotos.slice() : [],
       assinatura: hasNC ? draft.assinatura : null,
       atualizadoEm: new Date().toISOString()
     };
